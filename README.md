@@ -7,6 +7,8 @@ Ce projet présente une **solution entièrement DIY** pour motoriser des rideaux
 Regarde la vidéo pour découvrir le fonctionnement, les composants utilisés et les étapes de montage :  
 https://www.youtube.com/watch?v=K7A_Zi1eQ4E
 
+[![J'ai automatisé mes rideaux avec un mécanisme complètement DIY!](https://img.youtube.com/vi/K7A_Zi1eQ4E/0.jpg)](https://www.youtube.com/watch?v=K7A_Zi1eQ4E)
+
 ## 📄 Infos
 
 Le code au coeur du projet se trouve dans le fichier "controller.yaml".
