@@ -1,0 +1,347 @@
+esphome:
+  name: controller
+  friendly_name: controller
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+# Enable logging
+logger:
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: "ENTER YOUR KEY HERE"
+
+ota:
+  - platform: esphome
+    password: "PASSWORD"
+
+wifi:
+  ssid: YOUR SSID
+  password: PASSWORD
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "CONTROLLER FALLBACK HOTSPOT"
+    password: "PASSWORD"
+
+captive_portal:
+
+# Variables globales
+globals:
+  - id: home_speed
+    type: int
+    restore_value: no
+    initial_value: '200'
+  - id: move_speed
+    type: int
+    restore_value: no
+    initial_value: '1000'
+  - id: STEP_TOTAL_VERT
+    type: int
+    restore_value: no
+    initial_value: '14800'
+  - id: STEP_TOTAL_HORI
+    type: int
+    restore_value: no
+    initial_value: '17000'
+  - id: position_vert
+    type: float
+    restore_value: no
+    initial_value: '0.0'  # La position actuelle du rideau vertical en pas
+  - id: position_hori
+    type: float
+    restore_value: no
+    initial_value: '0.0'  # La position actuelle du rideau horizontal en pas
+
+# Configuration des moteurs pas à pas
+stepper:
+  - platform: a4988 #le drv8825 est quasiment identique au a4988
+    id: stepper_rid_vert
+    step_pin: GPIO12
+    dir_pin: GPIO14
+    max_speed: 1000  # Max speed possible is 1000
+    acceleration: 500 #1s pour atteindre Max Speed
+    deceleration: 500
+
+    # Optional:
+    sleep_pin: GPIO13
+
+  - platform: a4988 #le drv8825 est quasiment identique au a4988
+    id: stepper_rid_hori
+    step_pin: GPIO26
+    dir_pin: 
+      number: GPIO25
+      inverted: true
+    max_speed: 1000  # Max speed possible is 1000
+    acceleration: 500 #1s pour atteindre Max Speed
+    deceleration: 500
+
+    # Optional:
+    sleep_pin: GPIO27
+
+# Configuration des fins de course
+binary_sensor:
+  - platform: gpio
+    device_class: window
+    id: fin_course_vert
+    name: "FDC Rideau vertical chambre"
+    pin:
+      number: GPIO23
+      inverted: true
+      mode:
+        input: true
+        pullup: true
+
+  - platform: gpio
+    device_class: window
+    id: fin_course_hori
+    name: "FDC Rideaux horizontaux chambre "
+    pin:
+      number: GPIO22
+      inverted: true
+      mode:
+        input: true
+        pullup: true
+
+# Configuration du bouton reset
+  - platform: gpio
+    device_class: safety
+    id: bouton_reset_rideaux_chambre
+    name: "Reset Rideaux chambre "
+    pin:
+      number: GPIO15
+      inverted: true
+      mode:
+        input: true
+        pullup: true
+    on_click:
+      min_length: 2000ms
+      max_length: 5000ms
+      then:
+        - logger.log: "Démarrage du Homing (via reset) du rideau..."
+
+        - stepper.set_speed:
+            id: stepper_rid_vert
+            speed: !lambda 'return id(home_speed);' # Avance lente pour éviter tout choc
+        - stepper.set_target:
+            id: stepper_rid_vert
+            target: -30000 #On définit un target très loin pour permettre de trouver le fin de course
+        - wait_until:
+            binary_sensor.is_on: fin_course_vert
+        - stepper.report_position:
+            id: stepper_rid_vert
+            position: 0
+        # It's best to call set_target directly after report_position, so that the stepper doesn't move
+        - stepper.set_target:
+            id: stepper_rid_vert
+            target: 0
+        - stepper.set_speed:
+            id: stepper_rid_vert
+            speed: !lambda 'return id(move_speed);'
+
+        - stepper.set_speed:
+            id: stepper_rid_hori
+            speed: !lambda 'return id(home_speed);' # Avance lente pour éviter tout choc
+        - stepper.set_target:
+            id: stepper_rid_hori
+            target: -30000 #On définit un target très loin pour permettre de trouver le fin de course
+        - wait_until:
+            binary_sensor.is_on: fin_course_hori
+        - stepper.report_position:
+            id: stepper_rid_hori
+            position: 0
+        # It's best to call set_target directly after report_position, so that the stepper doesn't move
+        - stepper.set_target:
+            id: stepper_rid_hori
+            target: 0
+        - stepper.set_speed:
+            id: stepper_rid_hori
+            speed: !lambda 'return id(move_speed);'
+
+        - logger.log: "Homing (via reset) terminé. Position réinitialisée à 0."
+      #Ajout d'un double clic pour ouvrir ou fermer les rideaux
+    on_double_click:
+      min_length: 50ms
+      max_length: 350ms
+      then:
+        - logger.log: "Changement d'état manuel des rideaux"
+        - cover.toggle: controller_rideau_vertical_chambre
+        - cover.toggle: controller_rideaux_horizontaux_chambre
+
+# Ajout des "rideaux"
+cover:
+  - platform: template
+    name: "Rideau vertical chambre"
+    id: controller_rideau_vertical_chambre
+    lambda: !lambda |-
+      if (id(position_vert) >= 1.0) {
+        return COVER_OPEN;
+      } else if (id(position_vert) <= 0.0){
+        return COVER_CLOSED;
+      } else {
+        return id(position_vert);
+      }
+    open_action:
+       - if:
+          condition:
+            # Vérifie que le fin de course n'est pas déjà atteint
+            binary_sensor.is_off: fin_course_vert
+          then:
+            - stepper.set_target:
+                id: stepper_rid_vert
+                target: !lambda 'return id(STEP_TOTAL_VERT);'
+    close_action:
+      - while:
+          condition:
+              binary_sensor.is_off: fin_course_vert
+          then:
+            - stepper.set_target:
+                id: stepper_rid_vert
+                target: 0
+            - delay: 10ms
+      - stepper.report_position:
+          id: stepper_rid_vert
+          position: 0
+      # It's best to call set_target directly after report_position, so that the stepper doesn't move
+      - stepper.set_target:
+          id: stepper_rid_vert
+          target: 0
+    toggle_action:
+      - if:
+          condition:
+            lambda: 'return id(position_vert) >= 1.0;'
+          then:
+            - cover.close: controller_rideau_vertical_chambre
+          else:
+            - cover.open: controller_rideau_vertical_chambre
+    stop_action:
+      - lambda: !lambda |-
+          int stop_pos = id(stepper_rid_vert).current_position;
+          id(stepper_rid_vert).set_target(stop_pos);
+    position_action:
+       - lambda: !lambda |-          
+          // Calcul de la position cible en pas
+          int target_position = (int) (id(STEP_TOTAL_VERT) * pos);
+          // Mouvement vers la position cible
+          id(stepper_rid_vert).set_target(target_position);
+    has_position: true
+    optimistic: true
+    assumed_state: true #Mettre à false pour cacher les fleches d'actions dans le tableau de bord quand l'état du rideau est inconnu
+
+  - platform: template
+    name: "Rideaux horizontaux chambre"
+    id: controller_rideaux_horizontaux_chambre
+    lambda: !lambda |-
+      if (id(position_hori) >= 1.0) {
+        return COVER_OPEN;
+      } else if (id(position_hori) <= 0.0){
+        return COVER_CLOSED;
+      } else {
+        return id(position_hori);
+      }
+    open_action:
+       - if:
+          condition:
+            # Vérifie que le fin de course n'est pas déjà atteint
+            binary_sensor.is_off: fin_course_hori
+          then:
+            - stepper.set_target:
+                id: stepper_rid_hori
+                target: !lambda 'return id(STEP_TOTAL_HORI);'
+    close_action:
+      - while:
+          condition:
+              binary_sensor.is_off: fin_course_hori
+          then:
+            - stepper.set_target:
+                id: stepper_rid_hori
+                target: 0
+            - delay: 10ms
+      - stepper.report_position:
+          id: stepper_rid_hori
+          position: 0
+      # It's best to call set_target directly after report_position, so that the stepper doesn't move
+      - stepper.set_target:
+          id: stepper_rid_hori
+          target: 0
+    stop_action:
+      - lambda: !lambda |-
+          int stop_pos = id(stepper_rid_hori).current_position;
+          id(stepper_rid_hori).set_target(stop_pos);
+    toggle_action:
+      - if:
+          condition:
+            lambda: 'return id(position_hori) >= 1.0;'
+          then:
+            - cover.close: controller_rideaux_horizontaux_chambre
+          else:
+            - cover.open: controller_rideaux_horizontaux_chambre
+    position_action:
+       - lambda: !lambda |-          
+          // Calcul de la position cible en pas
+          int target_position = (int) (id(STEP_TOTAL_HORI) * pos);
+          // Mouvement vers la position cible
+          id(stepper_rid_hori).set_target(target_position);
+    has_position: true
+    optimistic: true
+    assumed_state: true #Mettre à false pour cacher les fleches d'actions dans le tableau de bord quand l'état du rideau est inconnu
+
+# Bouton pour lancer le Homing
+button:
+  - platform: template
+    name: "Homing Rideaux Chambre"
+    on_press:
+      then:
+        - logger.log: "Démarrage du Homing du rideau..."
+
+        - stepper.set_speed:
+            id: stepper_rid_vert
+            speed: !lambda 'return id(home_speed);' # Avance lente pour éviter tout choc
+        - stepper.set_target:
+            id: stepper_rid_vert
+            target: -30000 #On définit un target très loin pour permettre de trouver le fin de course
+        - wait_until:
+            binary_sensor.is_on: fin_course_vert
+        - stepper.report_position:
+            id: stepper_rid_vert
+            position: 0
+        # It's best to call set_target directly after report_position, so that the stepper doesn't move
+        - stepper.set_target:
+            id: stepper_rid_vert
+            target: 0
+        - stepper.set_speed:
+            id: stepper_rid_vert
+            speed: !lambda 'return id(move_speed);'
+
+        - stepper.set_speed:
+            id: stepper_rid_hori
+            speed: !lambda 'return id(home_speed);' # Avance lente pour éviter tout choc
+        - stepper.set_target:
+            id: stepper_rid_hori
+            target: -30000 #On définit un target très loin pour permettre de trouver le fin de course
+        - wait_until:
+            binary_sensor.is_on: fin_course_hori
+        - stepper.report_position:
+            id: stepper_rid_hori
+            position: 0
+        # It's best to call set_target directly after report_position, so that the stepper doesn't move
+        - stepper.set_target:
+            id: stepper_rid_hori
+            target: 0
+        - stepper.set_speed:
+            id: stepper_rid_hori
+            speed: !lambda 'return id(move_speed);'
+
+        - logger.log: "Homing terminé. Position réinitialisée à 0."
+
+# Mise à jour de la position uniquement toutes les 500ms
+interval:
+  - interval: 2000ms
+    then:
+      - lambda: !lambda |-
+          id(position_vert) = (float)id(stepper_rid_vert).current_position / (float)id(STEP_TOTAL_VERT);
+          id(position_hori) = (float)id(stepper_rid_hori).current_position / (float)id(STEP_TOTAL_HORI);
