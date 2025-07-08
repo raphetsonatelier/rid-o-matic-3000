@@ -1,6 +1,7 @@
 # Automatiser vos rideaux grâce au **RID-O-MATIC 3000** 🛠️
 
 Ce projet présente une solution entièrement DIY pour motoriser des rideaux et automatiser leur fonctionnement grâce à Home assistant.
+![gif-rideaux-automatiques](https://github.com/user-attachments/assets/41b6cd11-11b6-4962-9e5d-4e6e74f80a50)
 
  
 Ce projet a été réalisé dans le cadre d'une vidéo YouTube et n'avait pas spécialement vocation a être partagé à la base, car c'est assez spécifique et je n'ai pas pensé le système pour être “universel”. 
